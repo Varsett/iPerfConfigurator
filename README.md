@@ -1,6 +1,9 @@
 
-# iperf3 Profile Configurator — Руководство пользователя
-
+# iperf3 Profile Configurator
+---
+## Руководство пользователя/User manual  
+### (The English version of the guide is below)
+---
 ## Обзор
 
 **iperf3 Profile Configurator** — графический инструмент на PowerShell/WinForms для создания и управления профилями тестирования iperf3. Все профили хранятся в текстовом INI-файле. Сопутствующий CMD-скрипт читает этот файл и запускает тесты автоматически.
