@@ -1,7 +1,12 @@
+param(
+    [string]$WorkDir = ""
+)
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$IniFile = Join-Path $PSScriptRoot "iperf_profiles.ini"
+# Resolve working directory: use -WorkDir param if provided, else PSScriptRoot
+$WorkDir = if ($WorkDir -ne "" -and (Test-Path $WorkDir)) { $WorkDir.TrimEnd("\") } else { $PSScriptRoot }
+$IniFile  = Join-Path $WorkDir "iperf_profiles.ini"
 
 
 # Win32 API for textbox placeholder text
@@ -21,7 +26,7 @@ function Set-Placeholder {
 }
 
 # All known parameter keys - always written to INI
-$AllKeys = @("host","port","protocol","direction","bitrate","duration","interval","buflen","streams","window","extra")
+$AllKeys = @("host","port","protocol","direction","bitrate","duration","interval","buflen","streams","socketsize","tcpnodelay","extra")
 
 $C = @{
     Bg        = [System.Drawing.Color]::FromArgb(22,  22,  32)
@@ -44,8 +49,8 @@ $C = @{
     BtnSaveHov= [System.Drawing.Color]::FromArgb(175, 192, 235)
     BtnAll    = [System.Drawing.Color]::FromArgb(130, 180, 160)   # Muted green
     BtnAllHov = [System.Drawing.Color]::FromArgb(158, 205, 185)
-    BtnRel    = [System.Drawing.Color]::FromArgb(80,  80, 110)    # DarkGray-blue
-    BtnRelHov = [System.Drawing.Color]::FromArgb(100, 100, 135)
+    BtnRel    = [System.Drawing.Color]::FromArgb(85,  110, 165)   # Medium slate blue
+    BtnRelHov = [System.Drawing.Color]::FromArgb(110, 138, 195)
     Preview   = [System.Drawing.Color]::FromArgb(130, 175, 220)
 }
 
@@ -66,17 +71,23 @@ function Read-IniFile {
     $curData   = $null
     $curActive = $false
     foreach ($line in (Get-Content $Path -Encoding UTF8)) {
-        if ($line -match '^\[([^;][^\]]*)\]$') {
+        if ($line -match '^===(.+)$') {
+            # Active profile header: ===ProfileName
             if ($curName) { $result[$curName] = @{ Active=$curActive; Data=$curData } }
             $curName   = $Matches[1].Trim()
             $curData   = @{}
             $curActive = $true
-        } elseif ($line -match '^\[;([^\]]+)\]$') {
+        } elseif ($line -match '^;===(.+)$') {
+            # Inactive profile header: ;===ProfileName
             if ($curName) { $result[$curName] = @{ Active=$curActive; Data=$curData } }
             $curName   = $Matches[1].Trim()
             $curData   = @{}
             $curActive = $false
-        } elseif ($curName -and $line -match '^([^=;]+)=(.*)$') {
+        } elseif ($curName -and $line -match '^([^=;][^=]*)=(.*)$') {
+            # Active key=value
+            $curData[$Matches[1].Trim()] = $Matches[2].Trim()
+        } elseif ($curName -and -not $curActive -and $line -match '^;([^=;][^=]*)=(.*)$') {
+            # Inactive key=value (prefixed with ;)
             $curData[$Matches[1].Trim()] = $Matches[2].Trim()
         }
     }
@@ -89,16 +100,26 @@ function Write-IniFile {
     $lines = @()
     $first = $true
     foreach ($name in $Profiles.Keys) {
-        if (-not $first) { $lines += "; ---" }
+        if (-not $first) { $lines += "" }
         $first = $false
         $p = $Profiles[$name]
-        if ($p.Active) { $lines += "[$name]" } else { $lines += "[;$name]" }
-        foreach ($key in $AllKeys) {
-            $val = if ($p.Data.Contains($key)) { $p.Data[$key] } else { "" }
-            $lines += "$key=$val"
+        if ($p.Active) {
+            $lines += "===$name"
+            foreach ($key in $AllKeys) {
+                $val = if ($p.Data.Contains($key)) { $p.Data[$key] } else { "" }
+                $lines += "$key=$val"
+            }
+        } else {
+            $lines += ";===$name"
+            foreach ($key in $AllKeys) {
+                $val = if ($p.Data.Contains($key)) { $p.Data[$key] } else { "" }
+                $lines += ";$key=$val"
+            }
         }
     }
-    Set-Content -Path $Path -Value $lines -Encoding UTF8
+    # Save as UTF-8 without BOM
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllLines($Path, $lines, $utf8NoBom)
 }
 
 # UI Helpers
@@ -251,8 +272,8 @@ function New-Sep {
 # Main Form
 $form                 = New-Object System.Windows.Forms.Form
 $form.Text            = "iperf3 Profile Configurator"
-$form.ClientSize      = New-Object System.Drawing.Size(800, 606)
-$form.MinimumSize     = New-Object System.Drawing.Size(800, 606)
+$form.ClientSize      = New-Object System.Drawing.Size(800, 666)
+$form.MinimumSize     = New-Object System.Drawing.Size(800, 666)
 $form.BackColor       = $C.Bg
 $form.ForeColor       = $C.Text
 $form.Font            = $F.Main
@@ -274,7 +295,7 @@ $form.Controls.Add($titleLbl)
 # Left panel
 $leftPanel           = New-Object System.Windows.Forms.Panel
 $leftPanel.Location  = New-Object System.Drawing.Point(0, 34)
-$leftPanel.Size      = New-Object System.Drawing.Size(218, 548)
+$leftPanel.Size      = New-Object System.Drawing.Size(218, 608)
 $leftPanel.BackColor = $C.Panel
 $form.Controls.Add($leftPanel)
 
@@ -282,7 +303,7 @@ $leftPanel.Controls.Add((New-Label "PROFILES" 12 8 140 18 $C.TextDim))
 
 $profileList              = New-Object System.Windows.Forms.CheckedListBox
 $profileList.Location     = New-Object System.Drawing.Point(10, 28)
-$profileList.Size         = New-Object System.Drawing.Size(198, 446)
+$profileList.Size         = New-Object System.Drawing.Size(198, 506)
 $profileList.BackColor    = $C.Card
 $profileList.ForeColor    = $C.Text
 $profileList.Font         = $F.Main
@@ -291,18 +312,18 @@ $profileList.CheckOnClick = $false
 $leftPanel.Controls.Add($profileList)
 
 # Separator above buttons
-$leftPanel.Controls.Add((New-Sep 10 478 198))
+$leftPanel.Controls.Add((New-Sep 10 538 198))
 
 # Buttons same height as right panel buttons, aligned at y=530
-$btnAdd    = New-FlatButton "New"      10  482  95 28 $C.BtnNew  $C.TextDark $C.BtnNewHov
-$btnDelete = New-FlatButton "Delete"   113 482  95 28 $C.BtnDel  $C.TextDark $C.BtnDelHov
+$btnAdd    = New-FlatButton "New"      10  542  95 28 $C.BtnNew  $C.TextDark $C.BtnNewHov
+$btnDelete = New-FlatButton "Delete"   113 542  95 28 $C.BtnDel  $C.TextDark $C.BtnDelHov
 $leftPanel.Controls.Add($btnAdd)
 $leftPanel.Controls.Add($btnDelete)
 
 # Right panel
 $rightPanel           = New-Object System.Windows.Forms.Panel
 $rightPanel.Location  = New-Object System.Drawing.Point(218, 34)
-$rightPanel.Size      = New-Object System.Drawing.Size(572, 548)
+$rightPanel.Size      = New-Object System.Drawing.Size(572, 608)
 $rightPanel.BackColor = $C.Bg
 $form.Controls.Add($rightPanel)
 
@@ -313,10 +334,96 @@ $txtName.Add_TextChanged({
     if (-not $script:suppressEvents) { $script:dirty = $true }
 })
 $rightPanel.Controls.Add($txtName)
-$rightPanel.Controls.Add((New-Sep 10 38 542))
+
+# Templates dropdown
+$rightPanel.Controls.Add((New-Label "Template:" 16 42 110 20 $C.TextDim))
+$cmbTemplate = New-ComboBox 132 40 260 @("-- Custom --","Virtual Desktop","Air Link","Steam Link","ALVR")
+$rightPanel.Controls.Add($cmbTemplate)
+
+# Template definitions
+$templates = @{
+    "Virtual Desktop" = @{
+        name="TEST_UDP_VD"; protocol="UDP"; buflen="1450"; bitrate="300"
+        socketsize="2"; duration="180"; interval="0.1"; streams="1"
+        direction="Normal"; tcpnodelay=$false
+    }
+    "Air Link" = @{
+        name="TEST_UDP_AirLink"; protocol="UDP"; buflen="1440"; bitrate="200"
+        socketsize="4"; duration="180"; interval="0.1"; streams="1"
+        direction="Normal"; tcpnodelay=$false
+    }
+    "Steam Link" = @{
+        name="TEST_UDP_SteamLink"; protocol="UDP"; buflen="1400"; bitrate="300"
+        socketsize="1"; duration="180"; interval="0.1"; streams="1"
+        direction="Normal"; tcpnodelay=$false
+    }
+    "ALVR" = @{
+        name="TEST_UDP_ALVR"; protocol="UDP"; buflen="1440"; bitrate="400"
+        socketsize="1"; duration="180"; interval="0.1"; streams="1"
+        direction="Normal"; tcpnodelay=$false
+    }
+}
+
+$cmbTemplate.Add_SelectedIndexChanged({
+    if ($script:suppressEvents) { return }
+    $sel = $cmbTemplate.SelectedItem.ToString()
+    if ($sel -eq "-- Custom --") { return }
+    if (-not $templates.ContainsKey($sel)) { return }
+    $t = $templates[$sel]
+    $script:suppressEvents = $true
+
+    # Apply name
+    $txtName.Text = $t.name
+
+    # Apply protocol
+    $rowProto.cb.SelectedItem = $t.protocol
+    # Apply direction
+    $rowDir.cb.SelectedItem = $t.direction
+
+    # Apply numeric fields (enable manual + set value)
+    foreach ($pair in @(
+        @($rowBufLen,   $t.buflen),
+        @($rowBitrate,  $t.bitrate),
+        @($rowWindow,   $t.socketsize),
+        @($rowDuration, $t.duration),
+        @($rowInterval, $t.interval),
+        @($rowStreams,   $t.streams)
+    )) {
+        $row = $pair[0]; $val = $pair[1]
+        $row.tb.ForeColor = $C.Text
+        $row.tb.Text      = $val
+        $row.chk.Checked  = $true
+        $row.tb.Enabled   = $true
+    }
+
+    # Update buflen hint based on template protocol
+    $hint = if ($t.protocol -eq "UDP") { "1460" } else { "131072" }
+    if (-not $rowBufLen.chk.Checked) {
+        $rowBufLen.tb.ForeColor = $C.TextDim
+        $rowBufLen.tb.Text      = $hint
+        $rowBufLen.tb.Tag       = $hint
+    }
+
+    # TCP_NODELAY
+    $chkNodelay.Checked = $t.tcpnodelay
+    if ($t.protocol -eq "UDP") {
+        $chkNodelay.Checked = $false
+        $chkNodelay.Enabled = $false
+    } else {
+        $chkNodelay.Enabled = $true
+    }
+
+    # Restore detected IP to host field (templates don't set host)
+    Apply-HostIP
+    $script:suppressEvents = $false
+    $script:dirty = $true
+    Update-Preview
+})
+
+$rightPanel.Controls.Add((New-Sep 10 68 542))
 
 # Build parameter rows
-$y    = 50
+$y    = 80
 $rowH = 30
 $LX   = 16    # label x
 $LW   = 130   # label width
@@ -344,6 +451,8 @@ function Add-NumRow {
                 $field.ForeColor = $C.Text
             }
             $field.Enabled = $true
+            $field.Focus()
+            $field.SelectAll()
         } else {
             $field.Enabled = $false
             # Show hint if empty
@@ -376,14 +485,43 @@ $rowDir      = Add-ComboRow "Direction:"        "direction" @("Normal","Reverse"
 $rightPanel.Controls.Add((New-Sep 10 $yRef.Value 542))
 $yRef.Value += 8
 
-$rowHost     = Add-NumRow   "Host / IP:"        "host"     "192.168.1.1"        $yRef
+$rowHost     = Add-NumRow   "Host / IP:"        "host"     ""                   $yRef
 $rowPort     = Add-NumRow   "Port:"             "port"     "5201"               $yRef
 $rowBitrate  = Add-NumRow   "Bitrate (Mbps):"   "bitrate"  "100"                $yRef
 $rowDuration = Add-NumRow   "Duration (sec):"   "duration" "10"                 $yRef
 $rowInterval = Add-NumRow   "Interval (sec):"   "interval" "1"                  $yRef
-$rowBufLen   = Add-NumRow   "Block size (bytes):" "buflen"   "131072"             $yRef
+$rowBufLen   = Add-NumRow   "Buf len (bytes):"    "buflen"     "131072"           $yRef
 $rowStreams   = Add-NumRow   "Streams:"          "streams"  "1"                  $yRef
-$rowWindow   = Add-NumRow   "Buflen (MB):"      "window"   "1"                  $yRef
+$rowWindow   = Add-NumRow   "Socket buf (MB):"  "socketsize" "1"                $yRef
+# TCP_NODELAY row
+$lblNodelay = New-Label "TCP_NODELAY:" $LX ($yRef.Value+4) $LW 18
+$rightPanel.Controls.Add($lblNodelay)
+
+$chkNodelay = New-CheckBox "manual" $CX $yRef.Value $false 80
+$chkNodelay.Add_CheckedChanged({
+    if ($this.Checked -and $rowProto.cb.SelectedItem -ne "TCP") {
+        $this.Checked = $false
+        return
+    }
+    if (-not $script:suppressEvents) { $script:dirty = $true }
+    Update-Preview
+})
+
+# Label showing TCP_NODELAY text (read-only hint)
+$lblNDVal = New-Object System.Windows.Forms.TextBox
+$lblNDVal.Location    = New-Object System.Drawing.Point($TX, $yRef.Value)
+$lblNDVal.Size        = New-Object System.Drawing.Size(80, 22)
+$lblNDVal.Text        = "-N"
+$lblNDVal.ForeColor   = $C.TextDim
+$lblNDVal.BackColor   = $C.Input
+$lblNDVal.Font        = $F.Main
+$lblNDVal.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+$lblNDVal.ReadOnly    = $true
+$lblNDVal.TabStop     = $false
+$rightPanel.Controls.Add($lblNDVal)
+$rightPanel.Controls.Add($chkNodelay)
+$yRef.Value += 30
+
 $rightPanel.Controls.Add((New-Sep 10 $yRef.Value 542))
 $yRef.Value += 8
 
@@ -416,7 +554,7 @@ $yRef.Value += 8
 
 # Bottom buttons — same row, same height as left panel buttons (y=530 in left = $yRef.Value here)
 $btnSave    = New-FlatButton "Save Profile"  $LX         $yRef.Value  90 28 $C.BtnSave $C.TextDark $C.BtnSaveHov
-$btnReload  = New-FlatButton "Reload INI"   ($LX+92)    $yRef.Value  90 28 $C.BtnRel  $C.Text     $C.BtnRelHov
+$btnReload  = New-FlatButton "Reload INI"   ($LX+92)    $yRef.Value  90 28 $C.BtnRel  $C.TextDark $C.BtnRelHov
 $btnSaveAll = New-FlatButton "Save INI"     ($LX+184)   $yRef.Value  90 28 $C.BtnAll  $C.TextDark $C.BtnAllHov
 $rightPanel.Controls.Add($btnSave)
 $rightPanel.Controls.Add($btnReload)
@@ -431,7 +569,7 @@ $rightPanel.Controls.Add($btnRunLive)
 $rightPanel.Controls.Add($btnHelp)
 
 # Help dialog with RichTextBox for bold formatting
-$FlagFile = Join-Path $PSScriptRoot "runtest.flag"
+$FlagFile = Join-Path $WorkDir "runtest.flag"
 
 $btnRun.Add_Click({
     if ($script:dirty) {
@@ -442,7 +580,8 @@ $btnRun.Add_Click({
             [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
             [System.Windows.Forms.MessageBoxIcon]::Warning)
         if ($res -eq [System.Windows.Forms.DialogResult]::Yes) {
-            Save-CurrentProfile
+            $ok = Save-CurrentProfile
+            if (-not $ok) { return }
             Write-IniFile $IniFile $script:profiles
             $script:dirty = $false
         } elseif ($res -eq [System.Windows.Forms.DialogResult]::Cancel) {
@@ -450,7 +589,7 @@ $btnRun.Add_Click({
         }
     }
     Set-Content -Path $FlagFile -Value "1" -Encoding ASCII
-    $statusLbl.Text      = "  Run flag created: $FlagFile"
+    $statusLbl.Text      = "  [" + (Get-TS) + "]  Run flag created: $FlagFile"
     $statusLbl.ForeColor = $C.BtnRun
     $form.Close()
 })
@@ -464,24 +603,25 @@ $btnRunLive.Add_Click({
             [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
             [System.Windows.Forms.MessageBoxIcon]::Warning)
         if ($res -eq [System.Windows.Forms.DialogResult]::Yes) {
-            Save-CurrentProfile
+            $ok = Save-CurrentProfile
+            if (-not $ok) { return }
             Write-IniFile $IniFile $script:profiles
             $script:dirty = $false
         } elseif ($res -eq [System.Windows.Forms.DialogResult]::Cancel) {
             return
         }
     }
-    $liveFlagFile = Join-Path $PSScriptRoot "runlive.flag"
+    $liveFlagFile = Join-Path $WorkDir "runlive.flag"
     Set-Content -Path $liveFlagFile -Value "1" -Encoding ASCII
-    $statusLbl.Text      = "  Live flag created: $liveFlagFile"
+    $statusLbl.Text      = "  [" + (Get-TS) + "]  Live flag created: $liveFlagFile"
     $statusLbl.ForeColor = $C.BtnRun
     $form.Close()
 })
 
 $btnHelp.Add_Click({
-    $dlg = New-Object System.Windows.Forms.Form
+    $dlg                 = New-Object System.Windows.Forms.Form
     $dlg.Text            = "iperf3 Configurator - Help"
-    $dlg.Size            = New-Object System.Drawing.Size(560, 620)
+    $dlg.Size            = New-Object System.Drawing.Size(880, 1040)
     $dlg.MinimizeBox     = $false
     $dlg.MaximizeBox     = $false
     $dlg.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterParent
@@ -489,110 +629,238 @@ $btnHelp.Add_Click({
     $dlg.ForeColor       = $C.Text
     $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
 
-    $rtb = New-Object System.Windows.Forms.RichTextBox
-    $rtb.Location        = New-Object System.Drawing.Point(12, 12)
-    $rtb.Size            = New-Object System.Drawing.Size(518, 554)
-    $rtb.BackColor       = $C.Card
-    $rtb.ForeColor       = $C.Text
-    $rtb.ReadOnly        = $true
-    $rtb.BorderStyle     = [System.Windows.Forms.BorderStyle]::None
-    $rtb.ScrollBars      = [System.Windows.Forms.RichTextBoxScrollBars]::Vertical
-    $rtb.Font            = New-Object System.Drawing.Font("Segoe UI", 9)
-    $dlg.Controls.Add($rtb)
+    $rtbL = New-Object System.Windows.Forms.RichTextBox
+    $rtbL.Location    = New-Object System.Drawing.Point(12, 12)
+    $rtbL.Size        = New-Object System.Drawing.Size(410, 900)
+    $rtbL.BackColor   = $C.Card
+    $rtbL.ForeColor   = $C.Text
+    $rtbL.ReadOnly    = $true
+    $rtbL.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+    $rtbL.ScrollBars  = [System.Windows.Forms.RichTextBoxScrollBars]::Vertical
+    $rtbL.Font        = New-Object System.Drawing.Font("Segoe UI", 9)
+    $dlg.Controls.Add($rtbL)
 
-    function RTB-Add {
-        param([string]$Text, [bool]$Bold=$false, [bool]$Newline=$true)
-        $start = $rtb.TextLength
+    $div           = New-Object System.Windows.Forms.Panel
+    $div.Location  = New-Object System.Drawing.Point(420, 12)
+    $div.Size      = New-Object System.Drawing.Size(1, 960)
+    $div.BackColor = $C.Border
+    $dlg.Controls.Add($div)
+
+    $rtbR = New-Object System.Windows.Forms.RichTextBox
+    $rtbR.Location    = New-Object System.Drawing.Point(427, 12)
+    $rtbR.Size        = New-Object System.Drawing.Size(430, 900)
+    $rtbR.BackColor   = $C.Card
+    $rtbR.ForeColor   = $C.Text
+    $rtbR.ReadOnly    = $true
+    $rtbR.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+    $rtbR.ScrollBars  = [System.Windows.Forms.RichTextBoxScrollBars]::Vertical
+    $rtbR.Font        = New-Object System.Drawing.Font("Segoe UI", 9)
+    $dlg.Controls.Add($rtbR)
+
+
+
+    function W {
+        param([System.Windows.Forms.RichTextBox]$rtb,
+              [string]$Text,
+              [bool]$Bold = $false,
+              [bool]$NL   = $true)
+        $s = $rtb.TextLength
         $rtb.AppendText($Text)
-        $rtb.Select($start, $Text.Length)
-        $style = if ($Bold) { [System.Drawing.FontStyle]::Bold } else { [System.Drawing.FontStyle]::Regular }
-        $rtb.SelectionFont  = New-Object System.Drawing.Font("Segoe UI", 9, $style)
+        $rtb.Select($s, $Text.Length)
+        $fs = if ($Bold) { [System.Drawing.FontStyle]::Bold } else { [System.Drawing.FontStyle]::Regular }
+        $rtb.SelectionFont  = New-Object System.Drawing.Font("Segoe UI", 9, $fs)
         $rtb.SelectionColor = if ($Bold) { $C.Accent } else { $C.Text }
-        if ($Newline) { $rtb.AppendText("`n") }
+        if ($NL) { $rtb.AppendText("`n") }
     }
 
-    RTB-Add "PROFILES LIST" $true
-    RTB-Add "  The list on the left shows all profiles from the INI file."
-    RTB-Add "  Checkbox next to each name controls active/inactive state:"
-    RTB-Add "  Checked   " $true $false; RTB-Add "= written as [ProfileName] in INI, parsed by CMD script." $false
-    RTB-Add "  Unchecked " $true $false; RTB-Add "= written as [;ProfileName], skipped by CMD script." $false
-    RTB-Add "  Click a profile name to load it into the editor on the right."
-    RTB-Add ""
-    RTB-Add "CREATING A PROFILE" $true
-    RTB-Add "  Option A: Click " $false $false; RTB-Add "New" $true $false; RTB-Add ", edit the name and parameters, click " $false $false; RTB-Add "Save Profile" $true $false; RTB-Add "." $false
-    RTB-Add "  Option B: Type a name in " $false $false; RTB-Add "Profile name:" $true $false; RTB-Add " at the top, set parameters, click " $false $false; RTB-Add "Save Profile" $true $false; RTB-Add "." $false
-    RTB-Add "           A new profile is created automatically."
-    RTB-Add "  To rename: load the profile, edit the name field, click " $false $false; RTB-Add "Save Profile" $true $false; RTB-Add "." $false
-    RTB-Add ""
-    RTB-Add "PARAMETERS" $true
-    RTB-Add "  Each numeric field has a " $false $false; RTB-Add "manual" $true $false; RTB-Add " toggle button." $false
-    RTB-Add "  Gray  " $true $false; RTB-Add "= default mode. Key written empty in INI (e.g. bitrate=), iperf3 uses its default." $false
-    RTB-Add "  Blue  " $true $false; RTB-Add "= manual mode. Value is saved and passed to iperf3 command." $false
-    RTB-Add "  Gray numbers shown in empty fields are hints only, not saved values."
-    RTB-Add "  Protocol and Direction are always saved (dropdowns, no manual toggle needed)."
-    RTB-Add ""
-    RTB-Add "  Protocol   " $true $false; RTB-Add "       TCP or UDP." $false
-    RTB-Add "  Direction  " $true $false; RTB-Add "       Normal = client sends. Reverse (-R) = server sends." $false
-    RTB-Add "  Host / IP  " $true $false; RTB-Add "(-c)  Server address. Required for iperf3 client mode." $false
-    RTB-Add "  Port       " $true $false; RTB-Add "(-p)  Server port. Default: 5201." $false
-    RTB-Add "  Bitrate    " $true $false; RTB-Add "(-b)  Target bitrate in Mbps. UDP default: 1M, TCP: unlimited." $false
-    RTB-Add "  Duration   " $true $false; RTB-Add "(-t)  Test duration in seconds. Default: 10." $false
-    RTB-Add "  Interval   " $true $false; RTB-Add "(-i)  Stats report interval in seconds. Default: 1." $false
-    RTB-Add "  Block size " $true $false; RTB-Add "(-l)  Read/write block size in bytes. TCP default: 131072, UDP default: 1460." $false
-    RTB-Add "  Streams    " $true $false; RTB-Add "(-P)  Number of parallel streams. Default: 1." $false
-    RTB-Add "  Buflen     " $true $false; RTB-Add "(-w)  Socket buffer size in MB. Default: 1." $false
-    RTB-Add "  Extra      " $true $false; RTB-Add "      Any extra flags, appended verbatim to the command." $false
-    RTB-Add ""
-    RTB-Add "BUTTONS" $true
-    RTB-Add "  Save Profile  " $true $false; RTB-Add "Saves current editor state to memory (not to disk yet)." $false
-    RTB-Add "  Reload File   " $true $false; RTB-Add "Reloads all profiles from INI file. Discards unsaved changes." $false
-    RTB-Add "  Save All INI  " $true $false; RTB-Add "Calls Save Profile, then writes all profiles to disk." $false
-    RTB-Add "  Save Profile  " $true $false; RTB-Add "Saves current profile to memory only (not to disk)." $false
-    RTB-Add "  Reload INI    " $true $false; RTB-Add "Reloads all profiles from INI. Discards unsaved changes." $false
-    RTB-Add "  Save INI      " $true $false; RTB-Add "Saves all profiles to INI file on disk." $false
-    RTB-Add "  Run           " $true $false; RTB-Add "Saves INI (prompts if unsaved), signals CMD to run queued tests." $false
-    RTB-Add "  Run Live      " $true $false; RTB-Add "Like Run, but signals CMD to run a live/immediate test." $false
-    RTB-Add "  On close: if there are unsaved changes, you will be prompted to save." $false
-    RTB-Add ""
-    RTB-Add "FLAG FILES" $true
-    RTB-Add "  Run        " $true $false; RTB-Add "creates runtest.flag in the script folder." $false
-    RTB-Add "  Run Live   " $true $false; RTB-Add "creates runlive.flag in the script folder." $false
-    RTB-Add "  Simply closing the window creates no flag files." $false
-    RTB-Add ""
-    RTB-Add "  Check flags in your CMD script:" $false
-    RTB-Add "  " $false $false; RTB-Add "if exist runtest.flag  del runtest.flag  & call :_iPerfTest" $true $false; RTB-Add "" $false
-    RTB-Add "  " $false $false; RTB-Add "if exist runlive.flag  del runlive.flag  & call :_iPerfLive" $true $false; RTB-Add "" $false
-    RTB-Add ""
-    RTB-Add "  Launch the configurator from CMD:" $false
-    RTB-Add "  " $false $false; RTB-Add "powershell -ExecutionPolicy Bypass -File configurator.ps1" $true $false; RTB-Add "" $false
-    RTB-Add ""
-    RTB-Add "INI FILE FORMAT" $true
-    RTB-Add "  [ProfileName]   " $true $false; RTB-Add "Active profile section." $false
-    RTB-Add "  [;ProfileName]  " $true $false; RTB-Add "Inactive (skipped) profile section." $false
-    RTB-Add "  ; ---           " $true $false; RTB-Add "Separator between profiles." $false
-    RTB-Add "  key=value       " $true $false; RTB-Add "Parameter. Empty value = iperf3 uses its default." $false
-    RTB-Add ""
-    RTB-Add "  Use " $false $false; RTB-Add "iperf_parse.cmd" $true $false; RTB-Add " to iterate all active profiles and run tests:" $false
-    RTB-Add "  iperf_parse.cmd" $false
-    RTB-Add "  Edit the " $false $false; RTB-Add ":RunTest" $true $false; RTB-Add " section in that script with your launch command." $false
-    RTB-Add ""
-    RTB-Add "INI file is saved in the same folder as the script." $false
+    W $rtbL "PROFILES" $true
+    W $rtbL "  Checkbox = active/inactive state."
+    W $rtbL "  Checked  " $true $false; W $rtbL "===Name in INI, parsed by CMD." $false
+    W $rtbL "  Unchecked" $true $false; W $rtbL ";===Name in INI, whole block skipped." $false
+    W $rtbL "  Click name to load profile into editor."
+    W $rtbL ""
+    W $rtbL "CREATING A PROFILE" $true
+    W $rtbL "  Option A: click " $false $false; W $rtbL "New" $true $false; W $rtbL ", edit name and params, " $false $false; W $rtbL "Save Profile" $true $false; W $rtbL "." $false
+    W $rtbL "  Option B: type name in Profile name field,"
+    W $rtbL "  configure params, click " $false $false; W $rtbL "Save Profile" $true $false; W $rtbL " (auto-creates)." $false
+    W $rtbL "  Changing the name saves as a NEW profile."
+    W $rtbL "  The original profile stays unchanged."
+    W $rtbL ""
+    W $rtbL "PARAMETERS" $true
+    W $rtbL "  " $false $false; W $rtbL "manual" $true $false; W $rtbL " toggle: " $false $false; W $rtbL "Gray" $true $false; W $rtbL "=default  " $false $false; W $rtbL "Blue" $true $false; W $rtbL "=manual." $false
+    W $rtbL "  Clicking it moves keyboard focus to the field."
+    W $rtbL "  Gray numbers in fields are hints only, not saved."
+    W $rtbL "  Protocol and Direction: no manual toggle needed."
+    W $rtbL ""
+    W $rtbL "  Protocol  " $true $false; W $rtbL "TCP or UDP. INI: empty or -u." $false
+    W $rtbL "  Direction " $true $false; W $rtbL "Normal/Reverse. INI: empty or -R." $false
+    W $rtbL "  Host/IP   " $true $false; W $rtbL "(-c) Auto-detected at startup. Enabled" $false
+    W $rtbL "             by default, shown in preview. " $false $false; W $rtbL "manual" $true $false; W $rtbL " to change." $false
+    W $rtbL "  Port      " $true $false; W $rtbL "(-p) Default: 5201." $false
+    W $rtbL "  Bitrate   " $true $false; W $rtbL "(-b) Mbps. TCP: unlimited, UDP def: 1M." $false
+    W $rtbL "  Duration  " $true $false; W $rtbL "(-t) Seconds. Default: 10." $false
+    W $rtbL "  Interval  " $true $false; W $rtbL "(-i) Report interval sec. Default: 1." $false
+    W $rtbL "  Buf len   " $true $false; W $rtbL "(-l) Bytes. TCP hint: 131072, UDP: 1460." $false
+    W $rtbL "  Streams   " $true $false; W $rtbL "(-P) Parallel streams. Default: 1." $false
+    W $rtbL "  Socket buf" $true $false; W $rtbL "(-w) MB. Socket buffer size. Default: 1." $false
+    W $rtbL "  TCP_NODELAY" $true $false; W $rtbL "(-N) Disables Nagle. TCP only." $false
+    W $rtbL "             Blue = -N in command and INI." $false
+    W $rtbL "             Auto-disabled when UDP selected." $false
+    W $rtbL "  Extra     " $true $false; W $rtbL "Appended verbatim to the command line." $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "" $false
+    W $rtbL "(c) 2026 Varset & Gemini Dev  |  v1.32 by Claude" $false
+    W $rtbL "" $false
+    W $rtbL "Extended Rus/Eng Manual:" $false
+    $s = $rtbL.TextLength
+    $rtbL.AppendText("https://github.com/Varsett/iPerfConfigurator`n")
+    $rtbL.Select($s, 46)
+    $rtbL.SelectionColor = $C.Accent
+    $rtbL.SelectionFont  = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Underline)
+    $rtbL.Add_LinkClicked({
+        Start-Process "https://github.com/Varsett/iPerfConfigurator"
+    })
 
-    $rtb.SelectionStart = 0
+    W $rtbR "BUTTONS" $true
+    W $rtbR "  New           " $true $false; W $rtbR "New empty profile (timestamped name)." $false
+    W $rtbR "  Delete        " $true $false; W $rtbR "Delete selected profile (with confirm)." $false
+    W $rtbR "  Save Profile  " $true $false; W $rtbR "Save to memory only (not to disk)." $false
+    W $rtbR "  Reload INI    " $true $false; W $rtbR "Reload from disk. Unsaved changes lost." $false
+    W $rtbR "  Save INI      " $true $false; W $rtbR "Write all profiles to disk (UTF-8, no BOM)." $false
+    W $rtbR "  Run           " $true $false; W $rtbR "Save INI, create runtest.flag, close." $false
+    W $rtbR "  Run Live      " $true $false; W $rtbR "Save INI, create runlive.flag, close." $false
+    W $rtbR "  On close with unsaved changes: Yes/No/Cancel prompt."
+    W $rtbR "  Status bar shows timestamp [HH:mm:ss] for each op."
+    W $rtbR ""
+    W $rtbR "TEMPLATES" $true
+    W $rtbR "  Dropdown below profile name. Presets:" $false
+    W $rtbR "  Custom       " $true $false; W $rtbR "no preset, manual mode." $false
+    W $rtbR "  Virtual Desktop" $true $false; W $rtbR " UDP 300M buf 1450 sock 2MB 180s" $false
+    W $rtbR "  Air Link       " $true $false; W $rtbR " UDP 200M buf 1440 sock 4MB 180s" $false
+    W $rtbR "  Steam Link     " $true $false; W $rtbR " UDP 300M buf 1400 sock 1MB 180s" $false
+    W $rtbR "  ALVR           " $true $false; W $rtbR " UDP 400M buf 1440 sock 1MB 180s" $false
+    W $rtbR "  Fields stay editable after template is applied."
+    W $rtbR ""
+    W $rtbR "INI FILE FORMAT" $true
+    W $rtbR "  ===ProfileName  " $true $false; W $rtbR "Active profile." $false
+    W $rtbR "  ;===ProfileName " $true $false; W $rtbR "Inactive (whole block prefixed with ;)." $false
+    W $rtbR "  key=value       " $true $false; W $rtbR "Parameter. Empty value = iperf3 default." $false
+    W $rtbR "  protocol=       " $true $false; W $rtbR "empty=TCP, -u=UDP." $false
+    W $rtbR "  direction=      " $true $false; W $rtbR "empty=Normal, -R=Reverse." $false
+    W $rtbR "  tcpnodelay=     " $true $false; W $rtbR "-N=enabled, empty=disabled." $false
+    W $rtbR "  INI keys: host port protocol direction" $false
+    W $rtbR "  bitrate duration interval buflen" $false
+    W $rtbR "  streams socketsize tcpnodelay extra" $false
+    W $rtbR ""
+    W $rtbR "CMD INTEGRATION" $true
+    W $rtbR "  Paste iperf_parse.cmd into your main script."
+    W $rtbR "  Run      -> runtest.flag -> :_RunTest per profile"
+    W $rtbR "  Run Live -> runlive.flag -> :_RunLive per profile"
+    W $rtbR "  Close    -> no flags -> CMD continues normally"
+    W $rtbR ""
+    W $rtbR "  Variables in :_RunTest / :_RunLive:"
+    W $rtbR "  %host% %port% %protocol% %direction%"
+    W $rtbR "  %bitrate% %duration% %interval%"
+    W $rtbR "  %buflen% %streams% %socketsize%"
+    W $rtbR "  %tcpnodelay% %extra%"
+    W $rtbR ""
+    W $rtbR "  INI parsing uses temp files to avoid nested"
+    W $rtbR "  setlocal issues. Each profile is flushed to"
+    W $rtbR "  %TEMP%\ipc_*.tmp and deleted after use."
+    W $rtbR ""
+    W $rtbR "  Launch from CMD (pass working dir explicitly):"
+    W $rtbR "  powershell -ExecutionPolicy Bypass" $true $false; W $rtbR "" $false
+    W $rtbR "    -File conf.ps1 -WorkDir ""%~dp0""" $true $false; W $rtbR "" $false
+    W $rtbR "  -WorkDir sets where INI and flag files are created." $false
+    W $rtbR "  If omitted, files go next to the .ps1 script." $false
+    W $rtbR "  Use %~dp0 so files stay with your CMD/EXE," $false
+    W $rtbR "  not in %TEMP% when launched from a packed exe."
+    W $rtbR ""
+    W $rtbR "  Without -WorkDir:"
+    W $rtbR "  powershell -ExecutionPolicy Bypass -File conf.ps1 -WorkDir ""%~dp0"""
+
+    $rtbL.SelectionStart = 0
+    $rtbR.SelectionStart = 0
     [void]$dlg.ShowDialog()
 })
 
 
 # Status bar
 $statusLbl           = New-Object System.Windows.Forms.Label
-$statusLbl.Location  = New-Object System.Drawing.Point(0, 582)
+$statusLbl.Location  = New-Object System.Drawing.Point(0, 642)
 $statusLbl.Size      = New-Object System.Drawing.Size(800, 24)
 $statusLbl.BackColor = $C.Panel
 $statusLbl.ForeColor = $C.TextDim
 $statusLbl.Font      = New-Object System.Drawing.Font("Segoe UI", 8.5)
 $statusLbl.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
-$statusLbl.Text      = "  Ready  |  $IniFile"
+$statusLbl.Text      = "  Ready  |  " + $IniFile
 $form.Controls.Add($statusLbl)
+
+
+function Apply-HostIP {
+    param([bool]$Activate = $false)
+    $ip = $script:detectedIP
+    if ($ip -and $ip -ne "") {
+        $rowHost.tb.Tag       = $ip
+        $rowHost.tb.Text      = $ip
+        $rowHost.tb.ForeColor = $C.Text
+        if ($Activate) {
+            $rowHost.tb.Enabled = $true
+        } else {
+            $rowHost.tb.Enabled = $false
+        }
+    } else {
+        if (-not $Activate) {
+            $rowHost.tb.ForeColor = $C.TextDim
+            $rowHost.tb.Text      = ""
+            $rowHost.tb.Tag       = ""
+        }
+    }
+}
+
+# Timestamp helper
+function Get-TS { return (Get-Date).ToString("HH:mm:ss") }
+
+function Get-LocalIP {
+    # Find the IP of the adapter that has a default gateway
+    try {
+        $gw = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction Stop |
+              Sort-Object RouteMetric |
+              Select-Object -First 1
+        if ($gw) {
+            $ip = Get-NetIPAddress -InterfaceIndex $gw.InterfaceIndex `
+                      -AddressFamily IPv4 -ErrorAction Stop |
+                  Select-Object -First 1
+            if ($ip) { return $ip.IPAddress }
+        }
+    } catch {}
+    # Fallback: first non-loopback IPv4
+    try {
+        $ip = [System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) |
+              Where-Object { $_.AddressFamily -eq "InterNetwork" -and
+                             $_.ToString() -notlike "127.*" } |
+              Select-Object -First 1
+        if ($ip) { return $ip.ToString() }
+    } catch {}
+    return ""
+}
 
 # State
 $script:profiles       = Read-IniFile $IniFile
@@ -623,7 +891,8 @@ function Refresh-ProfileList {
 function Update-Preview {
     $parts = @("iperf3")
     $h = $rowHost.tb.Text.Trim()
-    if ($rowHost.chk.Checked -and $h) { $parts += ("-c " + $h) }
+    # Include host in preview if it has a value and is not showing a hint (dimmed)
+    if ($h -and $rowHost.tb.ForeColor -ne $C.TextDim) { $parts += ("-c " + $h) }
     $pt = $rowPort.tb.Text.Trim()
     if ($rowPort.chk.Checked -and $pt) { $parts += ("-p " + $pt) }
     if ($rowProto.cb.SelectedItem -eq "UDP")    { $parts += "-u" }
@@ -634,6 +903,7 @@ function Update-Preview {
     if ($rowBufLen.chk.Checked   -and $rowBufLen.tb.Text.Trim())   { $parts += ("-l " + $rowBufLen.tb.Text.Trim()) }
     if ($rowStreams.chk.Checked   -and $rowStreams.tb.Text.Trim())  { $parts += ("-P " + $rowStreams.tb.Text.Trim()) }
     if ($rowWindow.chk.Checked   -and $rowWindow.tb.Text.Trim())   { $parts += ("-w " + $rowWindow.tb.Text.Trim()   + "M") }
+    if ($chkNodelay.Checked -and $rowProto.cb.SelectedItem -eq "TCP") { $parts += "-N" }
     $ex = $txtExtra.Text.Trim()
     if ($ex) { $parts += $ex }
     $txtPreview.Text = ($parts -join " ")
@@ -654,8 +924,14 @@ function Load-Profile {
         if ($val -ne "") {
             $row.tb.ForeColor = $C.Text
             $row.tb.Text      = $val
-            $row.chk.Checked  = $true
-            $row.tb.Enabled   = $true
+            if ($row.key -eq "host") {
+                # Host: show value read-only, manual button stays gray
+                $row.chk.Checked = $false
+                $row.tb.Enabled  = $false
+            } else {
+                $row.chk.Checked = $true
+                $row.tb.Enabled  = $true
+            }
         } else {
             $row.chk.Checked  = $false
             $row.tb.Enabled   = $false
@@ -664,10 +940,12 @@ function Load-Profile {
         }
     }
 
-    $proto = if ($p.Contains("protocol") -and $p["protocol"] -ne "") { $p["protocol"] } else { "TCP" }
-    $dir   = if ($p.Contains("direction") -and $p["direction"] -ne "") { $p["direction"] } else { "Normal" }
+    $proto = if ($p.Contains("protocol") -and $p["protocol"] -eq "-u") { "UDP" } else { "TCP" }
+    $dir   = if ($p.Contains("direction") -and $p["direction"] -eq "-R") { "Reverse" } else { "Normal" }
     $rowProto.cb.SelectedItem = $proto
     $rowDir.cb.SelectedItem   = $dir
+    # Load tcpnodelay
+    $chkNodelay.Checked = ($p.Contains("tcpnodelay") -and $p["tcpnodelay"] -eq "-N")
     # Update Block size hint to match loaded protocol
     if (-not $rowBufLen.chk.Checked) {
         $hint = if ($proto -eq "UDP") { "1460" } else { "131072" }
@@ -691,9 +969,13 @@ function Save-CurrentProfile {
     if (-not $script:currentProfile) {
         $typedName = $txtName.Text.Trim()
         if (-not $typedName) {
-            $statusLbl.Text      = "  Enter a profile name first."
-            $statusLbl.ForeColor = $C.BtnDel
-            return
+            [System.Windows.Forms.MessageBox]::Show(
+                "Please enter a profile name before saving.",
+                "Name Required",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning)
+            $txtName.Focus()
+            return $false
         }
         $script:profiles[$typedName] = @{ Active=$true; Data=@{} }
         $script:currentProfile = $typedName
@@ -703,22 +985,36 @@ function Save-CurrentProfile {
     $oldName = $script:currentProfile
     $newName = $txtName.Text.Trim()
     if (-not $newName) {
-        [System.Windows.Forms.MessageBox]::Show("Profile name cannot be empty.", "Validation")
-        return
+            [System.Windows.Forms.MessageBox]::Show(
+                "Please enter a profile name before saving.",
+                "Name Required",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning)
+            $txtName.Focus()
+            return $false
     }
 
     # Collect data — always write all keys, empty = default
     $data = @{}
     foreach ($row in @($rowHost,$rowPort,$rowBitrate,$rowDuration,$rowInterval,$rowBufLen,$rowStreams,$rowWindow)) {
-        if ($row.chk.Checked) {
+        if ($row.key -eq "host") {
+            # Host: save if field has real value (not hint color, not empty)
+            $val = $row.tb.Text.Trim()
+            if ($val -ne "" -and $row.tb.ForeColor -ne $C.TextDim -and $val -ne "Enter server IP") {
+                $data[$row.key] = $val
+            } else {
+                $data[$row.key] = ""
+            }
+        } elseif ($row.chk.Checked) {
             $val = $row.tb.Text.Trim()
             $data[$row.key] = $val
         } else {
             $data[$row.key] = ""
         }
     }
-    $data["protocol"]  = $rowProto.cb.SelectedItem.ToString()
-    $data["direction"] = $rowDir.cb.SelectedItem.ToString()
+    $data["protocol"]  = if ($rowProto.cb.SelectedItem -eq "UDP") { "-u" } else { "" }
+    $data["direction"] = if ($rowDir.cb.SelectedItem  -eq "Reverse") { "-R" } else { "" }
+    $data["tcpnodelay"] = if ($chkNodelay.Checked -and $rowProto.cb.SelectedItem -eq "TCP") { "-N" } else { "" }
     $data["extra"]     = $txtExtra.Text.Trim()
 
     # Read active state from list
@@ -730,13 +1026,17 @@ function Save-CurrentProfile {
     }
 
     if ($oldName -ne $newName) {
-        $newProfiles = [System.Collections.Specialized.OrderedDictionary]::new()
-        foreach ($k in $script:profiles.Keys) {
-            if ($k -eq $oldName) { $newProfiles[$newName] = @{ Active=$isActive; Data=$data } }
-            else                  { $newProfiles[$k]       = $script:profiles[$k] }
+        # Name changed -> save as NEW profile, keep the old one intact
+        if ($script:profiles.Contains($newName)) {
+            $res = [System.Windows.Forms.MessageBox]::Show(
+                "Profile " + $newName + " already exists. Overwrite it?",
+                "Profile exists",
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Warning)
+            if ($res -ne [System.Windows.Forms.DialogResult]::Yes) { return $false }
         }
-        $script:profiles       = $newProfiles
-        $script:currentProfile = $newName
+        $script:profiles[$newName] = @{ Active=$isActive; Data=$data }
+        $script:currentProfile     = $newName
     } else {
         $script:profiles[$newName] = @{ Active=$isActive; Data=$data }
     }
@@ -744,16 +1044,21 @@ function Save-CurrentProfile {
     $script:dirty        = $true
     Refresh-ProfileList $newName
     Update-Preview
-    $statusLbl.Text      = "  Profile [" + $newName + "] saved in memory. Use Save All INI to write to disk."
+    $statusLbl.Text      = "  [" + (Get-TS) + "]  Profile [" + $newName + "] saved in memory. Use Save INI to write to disk."
     $statusLbl.ForeColor = $C.BtnSave
+    return $true
 }
-
 # Events
 $profileList.Add_SelectedIndexChanged({
     if ($script:suppressEvents) { return }
     $idx = $profileList.SelectedIndex
     if ($idx -lt 0) { return }
     Load-Profile $profileList.Items[$idx].ToString()
+    # If host was empty in profile, fill with detected IP
+    if ($rowHost.tb.ForeColor -eq $C.TextDim -or $rowHost.tb.Text.Trim() -eq "") {
+        Apply-HostIP
+        Update-Preview
+    }
 })
 
 $profileList.Add_ItemCheck({
@@ -771,6 +1076,8 @@ $btnAdd.Add_Click({
     $script:profiles[$newName] = @{ Active=$true; Data=@{} }
     Refresh-ProfileList $newName
     Load-Profile $newName
+    Apply-HostIP   # restore detected IP after Load-Profile resets field
+    Update-Preview
     $txtName.Focus(); $txtName.SelectAll()
 })
 
@@ -785,7 +1092,7 @@ $btnDelete.Add_Click({
         $script:currentProfile = $null
         $script:dirty = $true
         Refresh-ProfileList
-        $statusLbl.Text      = "  Profile deleted."
+        $statusLbl.Text      = "  [" + (Get-TS) + "]  Profile deleted."
         $statusLbl.ForeColor = $C.BtnDel
     }
 })
@@ -797,15 +1104,16 @@ $btnReload.Add_Click({
     $script:currentProfile = $null
     $script:dirty          = $false
     Refresh-ProfileList
-    $statusLbl.Text      = "  Profiles reloaded from disk."
+    $statusLbl.Text      = "  [" + (Get-TS) + "]  Profiles reloaded from disk."
     $statusLbl.ForeColor = $C.Accent
 })
 
 $btnSaveAll.Add_Click({
-    Save-CurrentProfile
+    $ok = Save-CurrentProfile
+    if (-not $ok) { return }
     Write-IniFile $IniFile $script:profiles
     $script:dirty        = $false
-    $statusLbl.Text      = "  INI file saved: " + $IniFile
+    $statusLbl.Text      = "  [" + (Get-TS) + "]  INI saved: " + $IniFile
     $statusLbl.ForeColor = $C.BtnAll
 })
 
@@ -816,20 +1124,69 @@ foreach ($ctl in @($rowHost.tb,$rowPort.tb,$rowBitrate.tb,$rowDuration.tb,$rowIn
         Update-Preview
     })
 }
-foreach ($chk in @($rowHost.chk,$rowPort.chk,$rowBitrate.chk,$rowDuration.chk,$rowInterval.chk,$rowBufLen.chk,$rowStreams.chk,$rowWindow.chk)) {
+foreach ($chk in @($rowPort.chk,$rowBitrate.chk,$rowDuration.chk,$rowInterval.chk,$rowBufLen.chk,$rowStreams.chk,$rowWindow.chk)) {
     $chk.Add_CheckedChanged({
         if (-not $script:suppressEvents) { $script:dirty = $true }
         Update-Preview
     })
 }
+
+# Host/IP manual button: activate for editing
+$rowHost.chk.Add_CheckedChanged({
+    if ($script:suppressEvents) { return }
+    $script:dirty = $true
+    if ($this.Checked) {
+        # Enable editing - use detected IP, or re-detect, or keep current text
+        $ip = if ($script:detectedIP -and $script:detectedIP -ne "") { $script:detectedIP } else { Get-LocalIP }
+        if ($ip -ne "") {
+            $rowHost.tb.ForeColor = $C.Text
+            $rowHost.tb.Text      = $ip
+        } else {
+            # Nothing detected - clear prompt text if showing
+            if ($rowHost.tb.ForeColor -eq $C.Danger) {
+                $rowHost.tb.Text = ""
+            }
+            $rowHost.tb.ForeColor = $C.Text
+        }
+        $rowHost.tb.Enabled = $true
+        $rowHost.tb.Focus()
+        $rowHost.tb.SelectAll()
+        $statusLbl.Text      = "  [" + (Get-TS) + "]  Host IP editable."
+        $statusLbl.ForeColor = $C.Accent
+    } else {
+        # Deactivate - restore detected IP as read-only display
+        $ip = if ($script:detectedIP -and $script:detectedIP -ne "") { $script:detectedIP } else { "" }
+        if ($ip -ne "") {
+            $rowHost.tb.Text      = $ip
+            $rowHost.tb.ForeColor = $C.Text
+            $rowHost.tb.Enabled   = $false
+        } else {
+            $rowHost.tb.Text      = "Enter server IP"
+            $rowHost.tb.ForeColor = $C.Danger
+            $rowHost.tb.Enabled   = $true
+            $script:suppressEvents = $true
+            $rowHost.chk.Checked  = $true   # keep active if no IP
+            $script:suppressEvents = $false
+        }
+    }
+    Update-Preview
+})
 $rowProto.cb.Add_SelectedIndexChanged({
     if (-not $script:suppressEvents) { $script:dirty = $true }
-    # Update Block size hint based on selected protocol
+    # Update Buf len hint based on selected protocol
     if (-not $rowBufLen.chk.Checked) {
         $hint = if ($rowProto.cb.SelectedItem -eq "UDP") { "1460" } else { "131072" }
         $rowBufLen.tb.ForeColor = $C.TextDim
         $rowBufLen.tb.Text      = $hint
         $rowBufLen.tb.Tag       = $hint
+    }
+    # Disable TCP_NODELAY toggle when UDP selected
+    if ($rowProto.cb.SelectedItem -eq "UDP") {
+        $chkNodelay.Checked = $false
+        $chkNodelay.Enabled = $false
+        $lblNDVal.ForeColor = $C.TextDim
+    } else {
+        $chkNodelay.Enabled = $true
     }
     Update-Preview
 })
@@ -843,6 +1200,38 @@ $rowDir.cb.Add_SelectedIndexChanged({
 $form.Add_Shown({
     Set-Placeholder $txtName  "Enter profile name"
     Set-Placeholder $txtExtra "--get-server-output --logfile out.txt ..."
+
+    # Show ready state immediately, detect IP after UI is fully painted
+    $statusLbl.Text      = "  Ready  |  " + $IniFile + "   Detecting local IP..."
+    $statusLbl.ForeColor = $C.TextDim
+
+    # Use a one-shot timer so IP detection runs after full UI render
+    $script:ipTimer = New-Object System.Windows.Forms.Timer
+    $script:ipTimer.Interval = 150
+    $script:ipTimer.Add_Tick({
+        param($sender, $e)
+        $sender.Stop()
+        $sender.Dispose()
+        $script:ipTimer = $null
+
+        $script:detectedIP = Get-LocalIP
+        Apply-HostIP
+        if ($script:detectedIP -ne "") {
+            $statusLbl.Text      = "  Ready  |  " + $IniFile + "   Local IP: " + $script:detectedIP
+            $statusLbl.ForeColor = $C.TextDim
+            Update-Preview
+        } else {
+            $rowHost.tb.Text      = "Enter server IP"
+            $rowHost.tb.ForeColor = $C.Danger
+            $rowHost.tb.Enabled   = $true
+            $script:suppressEvents = $true
+            $rowHost.chk.Checked  = $true
+            $script:suppressEvents = $false
+            $statusLbl.Text      = "  Ready  |  " + $IniFile + "   Could not detect local IP - enter manually."
+            $statusLbl.ForeColor = $C.Danger
+        }
+    })
+    $script:ipTimer.Start()
 })
 
 # Initial load
@@ -861,7 +1250,8 @@ $form.Add_FormClosing({
             [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
             [System.Windows.Forms.MessageBoxIcon]::Warning)
         if ($res -eq [System.Windows.Forms.DialogResult]::Yes) {
-            Save-CurrentProfile
+            $ok = Save-CurrentProfile
+            if (-not $ok) { return }
             Write-IniFile $IniFile $script:profiles
             $script:dirty = $false
         } elseif ($res -eq [System.Windows.Forms.DialogResult]::Cancel) {
