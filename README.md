@@ -78,6 +78,10 @@ if exist "%~dp0runlive.flag"  del "%~dp0runlive.flag"  & call :_RunLive
 | Air Link | TEST_UDP_AirLink | UDP | 1440 | 200M | 4MB | 180s | 0.1 |
 | Steam Link | TEST_UDP_SteamLink | UDP | 1400 | 300M | 1MB | 180s | 0.1 |
 | ALVR | TEST_UDP_ALVR | UDP | 1440 | 400M | 1MB | 180s | 0.1 |
+| Standard 0 | TEST_UDP_STD0 | UDP | 1460 | 0M | 1MB | 180s | 0.1 |
+| Standard 600 | TEST_UDP_STD_600 | UDP | 1460 | 600M | 1MB | 180s | 0.1 |
+
+
 
 **Protocol / Direction** — всегда сохраняются, кнопка manual не нужна.
 
