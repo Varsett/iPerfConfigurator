@@ -337,7 +337,7 @@ $rightPanel.Controls.Add($txtName)
 
 # Templates dropdown
 $rightPanel.Controls.Add((New-Label "Template:" 16 42 110 20 $C.TextDim))
-$cmbTemplate = New-ComboBox 132 40 260 @("-- Custom --","Virtual Desktop","Air Link","Steam Link","ALVR")
+$cmbTemplate = New-ComboBox 132 40 260 @("-- Custom --","Virtual Desktop","Air Link","Steam Link","ALVR","Standard 0","Standard 600")
 $rightPanel.Controls.Add($cmbTemplate)
 
 # Template definitions
@@ -345,22 +345,32 @@ $templates = @{
     "Virtual Desktop" = @{
         name="TEST_UDP_VD"; protocol="UDP"; buflen="1450"; bitrate="300"
         socketsize="2"; duration="180"; interval="0.1"; streams="1"
-        direction="Normal"; tcpnodelay=$false
+        direction="Direct"; tcpnodelay=$false
     }
     "Air Link" = @{
         name="TEST_UDP_AirLink"; protocol="UDP"; buflen="1440"; bitrate="200"
         socketsize="4"; duration="180"; interval="0.1"; streams="1"
-        direction="Normal"; tcpnodelay=$false
+        direction="Direct"; tcpnodelay=$false
     }
     "Steam Link" = @{
         name="TEST_UDP_SteamLink"; protocol="UDP"; buflen="1400"; bitrate="300"
         socketsize="1"; duration="180"; interval="0.1"; streams="1"
-        direction="Normal"; tcpnodelay=$false
+        direction="Direct"; tcpnodelay=$false
     }
     "ALVR" = @{
         name="TEST_UDP_ALVR"; protocol="UDP"; buflen="1440"; bitrate="400"
         socketsize="1"; duration="180"; interval="0.1"; streams="1"
-        direction="Normal"; tcpnodelay=$false
+        direction="Direct"; tcpnodelay=$false
+    }
+    "Standard 0" = @{
+        name="TEST_UDP_STD_0"; protocol="UDP"; buflen="1460"; bitrate="0"
+        socketsize="1"; duration="180"; interval="0.1"; streams="1"
+        direction="Direct"; tcpnodelay=$false
+    }
+    "Standard 600" = @{
+        name="TEST_UDP_STD_600"; protocol="UDP"; buflen="1460"; bitrate="600"
+        socketsize="1"; duration="180"; interval="0.1"; streams="1"
+        direction="Direct"; tcpnodelay=$false
     }
 }
 
@@ -481,7 +491,7 @@ function Add-ComboRow {
 $yRef = [ref]$y
 
 $rowProto    = Add-ComboRow "Protocol:"         "protocol"  @("TCP","UDP")        $yRef
-$rowDir      = Add-ComboRow "Direction:"        "direction" @("Normal","Reverse")  $yRef
+$rowDir      = Add-ComboRow "Direction:"        "direction" @("Direct","Reverse")  $yRef
 $rightPanel.Controls.Add((New-Sep 10 $yRef.Value 542))
 $yRef.Value += 8
 
@@ -621,7 +631,8 @@ $btnRunLive.Add_Click({
 $btnHelp.Add_Click({
     $dlg                 = New-Object System.Windows.Forms.Form
     $dlg.Text            = "iperf3 Configurator - Help"
-    $dlg.Size            = New-Object System.Drawing.Size(880, 1040)
+#    $dlg.Size            = New-Object System.Drawing.Size(880, 1040)
+    $dlg.Size            = New-Object System.Drawing.Size(880, 900)
     $dlg.MinimizeBox     = $false
     $dlg.MaximizeBox     = $false
     $dlg.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterParent
@@ -642,7 +653,8 @@ $btnHelp.Add_Click({
 
     $div           = New-Object System.Windows.Forms.Panel
     $div.Location  = New-Object System.Drawing.Point(420, 12)
-    $div.Size      = New-Object System.Drawing.Size(1, 960)
+#    $div.Size      = New-Object System.Drawing.Size(1, 960)
+    $div.Size      = New-Object System.Drawing.Size(1, 900)
     $div.BackColor = $C.Border
     $dlg.Controls.Add($div)
 
@@ -693,7 +705,7 @@ $btnHelp.Add_Click({
     W $rtbL "  Protocol and Direction: no manual toggle needed."
     W $rtbL ""
     W $rtbL "  Protocol  " $true $false; W $rtbL "TCP or UDP. INI: empty or -u." $false
-    W $rtbL "  Direction " $true $false; W $rtbL "Normal/Reverse. INI: empty or -R." $false
+    W $rtbL "  Direction " $true $false; W $rtbL "Direct/Reverse. INI: empty or -R." $false
     W $rtbL "  Host/IP   " $true $false; W $rtbL "(-c) Auto-detected at startup. Enabled" $false
     W $rtbL "             by default, shown in preview. " $false $false; W $rtbL "manual" $true $false; W $rtbL " to change." $false
     W $rtbL "  Port      " $true $false; W $rtbL "(-p) Default: 5201." $false
@@ -708,25 +720,36 @@ $btnHelp.Add_Click({
     W $rtbL "             Auto-disabled when UDP selected." $false
     W $rtbL "  Extra     " $true $false; W $rtbL "Appended verbatim to the command line." $false
     W $rtbL "" $false
+#    W $rtbL "" $false
+#    W $rtbL "" $false
+#    W $rtbL "" $false
+#    W $rtbL "" $false
+#    W $rtbL "" $false
+#    W $rtbL "" $false
+#    W $rtbL "" $false
+#    W $rtbL "" $false
+    W $rtbL "BUTTONS" $true
+    W $rtbL "  New           " $true $false; W $rtbL "New empty profile (timestamped name)." $false
+    W $rtbL "  Delete        " $true $false; W $rtbL "Delete selected profile (with confirm)." $false
+    W $rtbL "  Save Profile  " $true $false; W $rtbL "Save to memory only (not to disk)." $false
+    W $rtbL "  Reload INI    " $true $false; W $rtbL "Reload from disk. Unsaved changes lost." $false
+    W $rtbL "  Save INI      " $true $false; W $rtbL "Write all profiles to disk (UTF-8, no BOM)." $false
+    W $rtbL "  Run           " $true $false; W $rtbL "Save INI, create runtest.flag, close." $false
+    W $rtbL "  Run Live      " $true $false; W $rtbL "Save INI, create runlive.flag, close." $false
+    W $rtbL "  On close with unsaved changes: Yes/No/Cancel prompt."
+    W $rtbL "  Status bar shows timestamp [HH:mm:ss] for each op."
+    W $rtbL ""
+#    W $rtbL "" $false
+#    W $rtbL "" $false
+#    W $rtbL "" $false
+#    W $rtbL "" $false
+#    W $rtbL "" $false
+#    W $rtbL "" $false
+#    W $rtbL "" $false
     W $rtbL "" $false
     W $rtbL "" $false
     W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "" $false
-    W $rtbL "(c) 2026 Varset & Gemini Dev  |  v1.32 by Claude" $false
+    W $rtbL "(c) 2026 Varset & Gemini Dev  |  v1.53 by Claude" $false
     W $rtbL "" $false
     W $rtbL "Extended Rus/Eng Manual:" $false
     $s = $rtbL.TextLength
@@ -738,17 +761,17 @@ $btnHelp.Add_Click({
         Start-Process "https://github.com/Varsett/iPerfConfigurator"
     })
 
-    W $rtbR "BUTTONS" $true
-    W $rtbR "  New           " $true $false; W $rtbR "New empty profile (timestamped name)." $false
-    W $rtbR "  Delete        " $true $false; W $rtbR "Delete selected profile (with confirm)." $false
-    W $rtbR "  Save Profile  " $true $false; W $rtbR "Save to memory only (not to disk)." $false
-    W $rtbR "  Reload INI    " $true $false; W $rtbR "Reload from disk. Unsaved changes lost." $false
-    W $rtbR "  Save INI      " $true $false; W $rtbR "Write all profiles to disk (UTF-8, no BOM)." $false
-    W $rtbR "  Run           " $true $false; W $rtbR "Save INI, create runtest.flag, close." $false
-    W $rtbR "  Run Live      " $true $false; W $rtbR "Save INI, create runlive.flag, close." $false
-    W $rtbR "  On close with unsaved changes: Yes/No/Cancel prompt."
-    W $rtbR "  Status bar shows timestamp [HH:mm:ss] for each op."
-    W $rtbR ""
+#    W $rtbR "BUTTONS" $true
+#    W $rtbR "  New           " $true $false; W $rtbR "New empty profile (timestamped name)." $false
+#    W $rtbR "  Delete        " $true $false; W $rtbR "Delete selected profile (with confirm)." $false
+#    W $rtbR "  Save Profile  " $true $false; W $rtbR "Save to memory only (not to disk)." $false
+#    W $rtbR "  Reload INI    " $true $false; W $rtbR "Reload from disk. Unsaved changes lost." $false
+#    W $rtbR "  Save INI      " $true $false; W $rtbR "Write all profiles to disk (UTF-8, no BOM)." $false
+#    W $rtbR "  Run           " $true $false; W $rtbR "Save INI, create runtest.flag, close." $false
+#    W $rtbR "  Run Live      " $true $false; W $rtbR "Save INI, create runlive.flag, close." $false
+#    W $rtbR "  On close with unsaved changes: Yes/No/Cancel prompt."
+#    W $rtbR "  Status bar shows timestamp [HH:mm:ss] for each op."
+#    W $rtbR ""
     W $rtbR "TEMPLATES" $true
     W $rtbR "  Dropdown below profile name. Presets:" $false
     W $rtbR "  Custom       " $true $false; W $rtbR "no preset, manual mode." $false
@@ -756,6 +779,8 @@ $btnHelp.Add_Click({
     W $rtbR "  Air Link       " $true $false; W $rtbR " UDP 200M buf 1440 sock 4MB 180s" $false
     W $rtbR "  Steam Link     " $true $false; W $rtbR " UDP 300M buf 1400 sock 1MB 180s" $false
     W $rtbR "  ALVR           " $true $false; W $rtbR " UDP 400M buf 1440 sock 1MB 180s" $false
+    W $rtbR "  Standard 0     " $true $false; W $rtbR " UDP 0M buf 1460 sock 1MB 180s" $false
+    W $rtbR "  Standard 600   " $true $false; W $rtbR " UDP 600M buf 1460 sock 1MB 180s" $false
     W $rtbR "  Fields stay editable after template is applied."
     W $rtbR ""
     W $rtbR "INI FILE FORMAT" $true
@@ -763,7 +788,7 @@ $btnHelp.Add_Click({
     W $rtbR "  ;===ProfileName " $true $false; W $rtbR "Inactive (whole block prefixed with ;)." $false
     W $rtbR "  key=value       " $true $false; W $rtbR "Parameter. Empty value = iperf3 default." $false
     W $rtbR "  protocol=       " $true $false; W $rtbR "empty=TCP, -u=UDP." $false
-    W $rtbR "  direction=      " $true $false; W $rtbR "empty=Normal, -R=Reverse." $false
+    W $rtbR "  direction=      " $true $false; W $rtbR "empty=Direct, -R=Reverse." $false
     W $rtbR "  tcpnodelay=     " $true $false; W $rtbR "-N=enabled, empty=disabled." $false
     W $rtbR "  INI keys: host port protocol direction" $false
     W $rtbR "  bitrate duration interval buflen" $false
@@ -840,22 +865,24 @@ function Get-TS { return (Get-Date).ToString("HH:mm:ss") }
 
 function Get-LocalIP {
     # Find the IP of the adapter that has a default gateway
+    # Excludes APIPA (169.254.x.x) - assigned when DHCP is unavailable
     try {
-        $gw = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction Stop |
-              Sort-Object RouteMetric |
-              Select-Object -First 1
-        if ($gw) {
+        $routes = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction Stop |
+                  Sort-Object RouteMetric
+        foreach ($gw in $routes) {
             $ip = Get-NetIPAddress -InterfaceIndex $gw.InterfaceIndex `
-                      -AddressFamily IPv4 -ErrorAction Stop |
+                      -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                  Where-Object { $_.IPAddress -notlike "169.254.*" } |
                   Select-Object -First 1
             if ($ip) { return $ip.IPAddress }
         }
     } catch {}
-    # Fallback: first non-loopback IPv4
+    # Fallback: first non-loopback, non-APIPA IPv4
     try {
         $ip = [System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) |
               Where-Object { $_.AddressFamily -eq "InterNetwork" -and
-                             $_.ToString() -notlike "127.*" } |
+                             $_.ToString() -notlike "127.*" -and
+                             $_.ToString() -notlike "169.254.*" } |
               Select-Object -First 1
         if ($ip) { return $ip.ToString() }
     } catch {}
@@ -941,7 +968,7 @@ function Load-Profile {
     }
 
     $proto = if ($p.Contains("protocol") -and $p["protocol"] -eq "-u") { "UDP" } else { "TCP" }
-    $dir   = if ($p.Contains("direction") -and $p["direction"] -eq "-R") { "Reverse" } else { "Normal" }
+    $dir   = if ($p.Contains("direction") -and $p["direction"] -eq "-R") { "Reverse" } else { "Direct" }
     $rowProto.cb.SelectedItem = $proto
     $rowDir.cb.SelectedItem   = $dir
     # Load tcpnodelay
